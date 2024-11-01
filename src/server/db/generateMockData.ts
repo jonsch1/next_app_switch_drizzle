@@ -122,7 +122,7 @@ async function generateMockData() {
     const [content] = await db.insert(schema.content).values({
       title: faker.lorem.sentence(),
       content: faker.lorem.paragraphs(3),
-      type: faker.helpers.arrayElement(['discussion', 'hypothesis', 'educational', 'patient_story']),
+      type: faker.helpers.arrayElement(['discussion', 'hypothesis', 'educational', 'patient_story', 'other']),
       projectId: faker.helpers.arrayElement(projectIds),
       authorId: faker.helpers.arrayElement(userIds),
     }).returning({ id: schema.content.id });

@@ -43,7 +43,7 @@ import {
     authorId: number;
     author: {
       id: number;
-      name: string;
+      name: string | null;
     } | null;
     project: {
       id: number;

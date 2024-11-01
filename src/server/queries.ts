@@ -110,6 +110,12 @@ export async function getContentWithComments(contentId: number): Promise<Content
     ),
     with: {
       author: true,
+      project: {
+        columns: {
+          id: true,
+          name: true,
+        },
+      },
       comments: {
         where: isNull(comments.deletedAt),
         orderBy: desc(comments.createdAt),
@@ -119,16 +125,12 @@ export async function getContentWithComments(contentId: number): Promise<Content
             where: eq(upvotes.entityType, 'comment')
           },
         },
-        project: {
-          id: projects.id,
-          projectName: projects.name,
-        },
       },
       upvotes: {
         where: eq(upvotes.entityType, 'content')
       },
     },
-  });
+  }) as ContentWithComments | undefined;
 }
 // Stats Query
 export async function getProjectStats(projectId: number) {
