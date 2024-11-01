@@ -4,7 +4,7 @@ import { pgEnum, pgTable, serial, text, jsonb, timestamp, numeric, boolean, inte
 export const visibilityType = pgEnum('visibility_type', ['public', 'private', 'restricted', 'project']);
 export const collaborationType = pgEnum('collaboration_type', ['open', 'closed', 'request']);
 export const projectStatus = pgEnum('project_status', ['active', 'inactive', 'completed']);
-export const contentType = pgEnum('content_type', ['discussion', 'hypothesis', 'educational', 'patient_story']);
+export const contentType = pgEnum('content_type', ['discussion', 'hypothesis', 'educational', 'patient_story', 'other']);
 export const roleType = pgEnum('role_type', ['member', 'moderator']);
 export const activityType = pgEnum('activity_type', [
   'profile_update', 'project_creation', 'project_update',

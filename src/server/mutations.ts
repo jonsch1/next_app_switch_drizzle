@@ -2,7 +2,7 @@
 import { db } from "./db/index";
 import { auth } from "@/auth";
 import { 
-  users, profiles, projects, projectMembers, content, comments,
+ profiles, projects, projectMembers, content, comments,
   upvotes, projectPendingApplications
 } from "./db/schema";
 import { eq, and, isNull } from "drizzle-orm";
@@ -176,5 +176,49 @@ export async function deleteComment(commentId: number) {
   return await db
     .delete(comments)
     .where(eq(comments.id, commentId))
+    .returning()
+}
+
+// Add this new mutation
+export async function updateContent(
+  contentId: number,
+  data: Partial<Omit<typeof content.$inferInsert, 'authorId'>>
+) {
+  const userId = await getAuthenticatedUserId()
+  
+  // First verify the user owns this content
+  const existingContent = await db.query.content.findFirst({
+    where: and(
+      eq(content.id, contentId),
+      eq(content.authorId, userId)
+    ),
+  })
+  
+  if (!existingContent) throw new Error("Content not found or unauthorized")
+
+  return await db
+    .update(content)
+    .set(data)
+    .where(eq(content.id, contentId))
+    .returning()
+}
+
+// Add this new mutation
+export async function deleteContent(contentId: number) {
+  const userId = await getAuthenticatedUserId()
+  
+  // First verify the user owns this content
+  const existingContent = await db.query.content.findFirst({
+    where: and(
+      eq(content.id, contentId),
+      eq(content.authorId, userId)
+    ),
+  })
+  
+  if (!existingContent) throw new Error("Content not found or unauthorized")
+
+  return await db
+    .delete(content)
+    .where(eq(content.id, contentId))
     .returning()
 }

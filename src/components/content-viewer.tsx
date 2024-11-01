@@ -40,8 +40,18 @@ import {
 import { Input } from "@/components/ui/input"
 import { LoadingSpinner } from '@/components/ui/spinner'
 import { getContentWithComments } from "@/server/queries"
-import { createComment, updateComment, deleteComment } from "@/server/mutations"
+import { createComment, updateComment, deleteComment, toggleContentUpvote, toggleCommentUpvote, updateContent, deleteContent } from "@/server/mutations"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 const commentSchema = z.object({
   content: z.string().min(1, "Comment cannot be empty").max(1000, "Comment is too long (max 1000 characters)"),
@@ -117,7 +127,7 @@ export function ContentViewer({ contentId }: { contentId: string }) {
   const [editingComment, setEditingComment] = React.useState<string | null>(null)
   const [editingContent, setEditingContent] = React.useState(false)
   const [session, setSession] = React.useState<any>(null)
-  const [replyingTo, setReplyingTo] = React.useState<string | null>(null)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
 
   const form = useForm<CommentFormData>({
     resolver: zodResolver(commentSchema),
@@ -133,27 +143,6 @@ export function ContentViewer({ contentId }: { contentId: string }) {
     },
   })
   console.log(content?.comments)
-  // Add new form for replies
-  const replyForm = useForm<CommentFormData>({
-    resolver: zodResolver(commentSchema),
-    defaultValues: { content: "" },
-  })
-
-  // Add state for collapsed comments
-  const [collapsedComments, setCollapsedComments] = React.useState<Set<string>>(new Set())
-
-  // Add toggle function
-  const toggleComment = (commentId: string) => {
-    setCollapsedComments(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(commentId)) {
-        newSet.delete(commentId)
-      } else {
-        newSet.add(commentId)
-      }
-      return newSet
-    })
-  }
 
   // Fetch content data
   React.useEffect(() => {
@@ -165,11 +154,11 @@ export function ContentViewer({ contentId }: { contentId: string }) {
         
         // Initialize votes state based on upvotes arrays
         setVotes({
-          content: data.upvotes.some(v => v.userId === session?.user?.id),
+          content: data.upvotes.some(v => v.userId.toString() === session?.user?.id.toString()),
           comments: Object.fromEntries(
             data.comments.map(comment => [
               comment.id, 
-              comment.upvotes.some(v => v.userId === session?.user?.id)
+              comment.upvotes.some(v => v.userId.toString() === session?.user?.id.toString())
             ])
           )
         })
@@ -224,10 +213,25 @@ export function ContentViewer({ contentId }: { contentId: string }) {
   if (!content) return <div>Content not found</div>
 
   const handleEditContent = async (values: ContentFormData) => {
-    console.log(values)
+    try {
+      const updatedContent = await updateContent(parseInt(contentId), values)
+      setContent(prev => prev ? { ...prev, ...updatedContent[0] } : null)
+      setEditingContent(false)
+      toast.success('Content updated successfully')
+    } catch (error) {
+      console.error(error)
+      toast.error('Failed to update content')
+    }
   }
   const handleDeleteContent = async () => {
-    console.log('delete content')
+    try {
+      await deleteContent(parseInt(contentId))
+      toast.success('Content deleted successfully')
+      router.push('/') // or wherever your content list page is
+    } catch (error) {
+      console.error(error)
+      toast.error('Failed to delete content')
+    }
   }
   const handleEditComment = async (commentId: string, values: CommentFormData) => {
     try {
@@ -268,8 +272,89 @@ export function ContentViewer({ contentId }: { contentId: string }) {
       toast.error('Failed to delete comment')
     }
   }
-  const handleVote = async (commentId: string) => {
-    console.log(commentId)
+  const handleVote = async (commentId?: string) => {
+    try {
+      if (!session?.user?.id) {
+        toast.error('Please sign in to vote')
+        return
+      }
+
+      if (commentId) {
+        // Handle comment vote
+        const isUpvoted = await toggleCommentUpvote(parseInt(commentId), parseInt(session.user.id))
+        setVotes(prev => ({
+          ...prev,
+          comments: {
+            ...prev.comments,
+            [commentId]: isUpvoted
+          }
+        }))
+
+        // Update comment upvotes in content state
+        setContent(prev => {
+          if (!prev) return null
+          return {
+            ...prev,
+            comments: prev.comments.map(comment => {
+              if (comment.id.toString() === commentId) {
+                const currentUpvotes = comment.upvotes || []
+                if (isUpvoted) {
+                  return {
+                    ...comment,
+                    upvotes: [...currentUpvotes, {
+                      id: Date.now(),
+                      userId: parseInt(session.user.id),
+                      entityType: 'comment',
+                      entityId: parseInt(commentId),
+                      upvotedAt: new Date()
+                    }]
+                  }
+                } else {
+                  return {
+                    ...comment,
+                    upvotes: currentUpvotes.filter(u => u.userId !== parseInt(session.user.id))
+                  }
+                }
+              }
+              return comment
+            })
+          }
+        })
+      } else {
+        // Handle content vote
+        const isUpvoted = await toggleContentUpvote(parseInt(contentId), parseInt(session.user.id))
+        setVotes(prev => ({
+          ...prev,
+          content: isUpvoted
+        }))
+        
+        // Update the content's upvotes count
+        setContent(prev => {
+          if (!prev) return null
+          const currentUpvotes = prev.upvotes || []
+          if (isUpvoted) {
+            return {
+              ...prev,
+              upvotes: [...currentUpvotes, {
+                id: Date.now(), // temporary ID
+                userId: parseInt(session.user.id),
+                entityType: 'content',
+                entityId: parseInt(contentId),
+                upvotedAt: new Date()
+              }]
+            }
+          } else {
+            return {
+              ...prev,
+              upvotes: currentUpvotes.filter(u => u.userId !== parseInt(session.user.id))
+            }
+          }
+        })
+      }
+    } catch (error) {
+      console.error(error)
+      toast.error('Failed to update vote')
+    }
   }
   const handleReply = async (commentId: string, values: CommentFormData) => {
     try {
@@ -288,7 +373,6 @@ export function ContentViewer({ contentId }: { contentId: string }) {
         }]
               } : null)
       form.reset()
-      setReplyingTo(null)
       toast.success('Reply posted successfully')
     } catch (error) {
       console.error(error)
@@ -337,7 +421,7 @@ export function ContentViewer({ contentId }: { contentId: string }) {
               <Avatar>
                 <AvatarImage src={`https://avatar.vercel.sh/${content.author.username || 'Guest'}`} alt={content.author.username || 'Guest'} />
               </Avatar>
-              {session?.user?.id === content.author.id && (
+              {session?.user?.id.toString() === content.author.id!.toString() && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm">
@@ -348,6 +432,13 @@ export function ContentViewer({ contentId }: { contentId: string }) {
                     <DropdownMenuItem onClick={() => setEditingContent(true)}>
                       <Pencil className="mr-2 h-4 w-4" />
                       Edit
+                    </DropdownMenuItem>
+                    <DropdownMenuItem 
+                      onClick={() => setShowDeleteDialog(true)}
+                      className="text-red-600 dark:text-red-400"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -362,7 +453,7 @@ export function ContentViewer({ contentId }: { contentId: string }) {
               <Button 
                 variant="outline" 
                 size="sm" 
-                // onClick={() => handleVote()}
+                onClick={() => handleVote()}
                 className={votes.content ? 'bg-green-100' : ''}
               >
                 <ThumbsUp className="mr-2 h-4 w-4" />
@@ -482,6 +573,27 @@ export function ContentViewer({ contentId }: { contentId: string }) {
           </ScrollArea>
         </CardContent>
       </Card>
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete your post
+              and all its comments.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteContent}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -619,9 +731,9 @@ function CommentComponent({
                       variant="ghost" 
                       size="sm"
                       onClick={() => onVote(comment.id.toString())}
-                      className={votes[comment.id] ? 'bg-green-100' : ''}
+                      className={`${votes[comment.id] ? 'bg-green-100 hover:bg-green-200' : ''}`}
                     >
-                      <ThumbsUp className="mr-2 h-4 w-4" />
+                      <ThumbsUp className={`mr-2 h-4 w-4 ${votes[comment.id] ? 'text-green-600' : ''}`} />
                       {comment.upvotes.length}
                     </Button>
                     <Popover open={isReplying} onOpenChange={setIsReplying}>

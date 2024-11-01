@@ -29,7 +29,7 @@ export default function RootLayout({
                     >
             <SidebarProvider>
               <RareDiseasePlatformSidebar>
-                <main className="p-4 container mx-auto scrollbar-gutter-stable">
+                <main className="p-4 container mx-auto">
                     {children}
                   <Toaster />
                 </main>

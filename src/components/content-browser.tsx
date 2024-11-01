@@ -1,16 +1,16 @@
 "use client"
 
 import * as React from "react"
-import { Brain, FileText, Film, MessageSquare, Plus, Search, ThumbsUp, Upload, Users, Video } from "lucide-react"
+import { Brain, FileText, MessageSquare, Search, ThumbsUp } from "lucide-react"
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarImage } from "@/components/ui/avatar"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CreateContentDialog } from "@/components/create-content-dialog"
 import { Label } from "@/components/ui/label"
@@ -149,6 +149,7 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
           onOpenChange={handleDialogChange}
           type={selectedType}
           projectId={selectedProject !== 'all' ? selectedProject : undefined}
+          projects={projects}
           onSuccess={fetchContent}
         />
       </div>
