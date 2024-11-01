@@ -25,13 +25,6 @@ import {
   export type Upvote = typeof upvotes.$inferSelect;
   export type NewUpvote = typeof upvotes.$inferInsert;
 
-  export type ProjectWithRelations = Project & {
-    members: (ProjectMember & {
-      user: User;
-    })[];
-    content: Content[];
-  };
-  
   export type CommentWithRelations = Comment & {
     author: Profile;
     upvotes: Upvote[];
@@ -74,3 +67,31 @@ import {
       projectName: string;
     };
   };
+
+  export type ProjectWithRelations = {
+    id: number;
+    name: string;
+    description: string;
+    disease: string;
+    owner: {
+      name: string;
+    };
+    members: {
+      user: {
+        id: number;
+        name: string;
+      };
+    }[];
+    content: {
+      id: number;
+      type: string;
+      createdAt: Date;
+    }[];
+    curations: {
+      statement: {
+        id: number;
+        createdAt: Date;
+      };
+    }[];
+    createdAt: Date;
+  }

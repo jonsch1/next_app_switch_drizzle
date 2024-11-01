@@ -42,6 +42,7 @@ interface CreateContentDialogProps {
   projectId?: string
   projects?: { id: string; projectName: string }[]
   onSuccess?: () => void
+  defaultProjectId?: string
 }
 
 export function CreateContentDialog({ 
@@ -50,13 +51,14 @@ export function CreateContentDialog({
   type = "discussion",
   projectId,
   projects = [],
-  onSuccess 
+  onSuccess,
+  defaultProjectId
 }: CreateContentDialogProps) {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       type: type as "discussion" | "hypothesis" | "educational" | "other",
-      projectId: projectId,
+      projectId: projectId || defaultProjectId,
     },
   })
 
@@ -79,9 +81,6 @@ export function CreateContentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        <Button>Create New</Button>
-      </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle>Create New Content</DialogTitle>
@@ -129,7 +128,7 @@ export function CreateContentDialog({
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="">None</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
                         {projects.map((project) => (
                           <SelectItem key={project.id} value={project.id}>
                             {project.projectName}

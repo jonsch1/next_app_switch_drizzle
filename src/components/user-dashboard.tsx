@@ -64,14 +64,8 @@ function DashboardContent() {
 
   return (
     <div className="flex-1">
-      <div className="flex items-center justify-between mb-4">
+      <div className=" mb-4">
         <h2 className="text-3xl font-bold tracking-tight">{session?.user?.name ? `Welcome back, ${session?.user?.name}` : 'Welcome'}</h2>
-        <div className="flex items-center space-x-2">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            Join New Project
-          </Button>
-        </div>
       </div>
       
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">

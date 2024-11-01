@@ -16,15 +16,9 @@ import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 
-import { Project, User, Content, Statement } from '@prisma/client'
 import { useEffect, useState } from 'react'
-
-type ProjectWithRelations = Project & {
-  author: User;
-  collaborators: { user: User }[];
-  contents: Content[];
-  statements: Statement[];
-}
+import { ProjectWithRelations } from '@/server/db-types'
+import { getAllProjectsWithRelations } from "@/server/queries"
 
 const projectCategories = [
   { value: "neurological", label: "Neurological Disorders" },
@@ -53,17 +47,17 @@ function generateActivityData(project: ProjectWithRelations): ActivityData[] {
     hypotheses: 0,
   }));
 
-  // Count statements from the Statement model
-  project.statements.forEach(statement => {
-    const contentDate = new Date(statement.createdAt).toISOString().split('T')[0];
-    const dayIndex = days.indexOf(contentDate);
+  // Count statements from curations
+  project.curations.forEach(curation => {
+    const statementDate = new Date(curation.statement.createdAt).toISOString().split('T')[0];
+    const dayIndex = days.indexOf(statementDate);
     if (dayIndex !== -1) {
       activityData[dayIndex].statements++;
     }
   });
 
-  // Count hypotheses from the Content model
-  project.contents.forEach(content => {
+  // Count hypotheses from content
+  project.content.forEach(content => {
     const contentDate = new Date(content.createdAt).toISOString().split('T')[0];
     const dayIndex = days.indexOf(contentDate);
     if (dayIndex !== -1 && content.type === 'hypothesis') {
@@ -85,10 +79,8 @@ export function ExploreProjectsComponent() {
   useEffect(() => {
     async function fetchProjects() {
       try {
-        const response = await fetch('/api/projects/getAll')
-        if (!response.ok) throw new Error('Failed to fetch')
-        const data = await response.json()
-        setProjects(data)
+        const data = await getAllProjectsWithRelations()
+        setProjects(data as ProjectWithRelations[])
       } catch (error) {
         console.error('Error fetching projects:', error)
       } finally {
@@ -100,8 +92,8 @@ export function ExploreProjectsComponent() {
   }, [])
 
   const filteredProjects = projects.filter(project => 
-    project.projectName.toLowerCase().includes(searchTerm.toLowerCase()) &&
-    (selectedCategories.length === 0 || selectedCategories.includes(project.diseaseCategory)) &&
+    project.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
+    (selectedCategories.length === 0 || selectedCategories.includes(project.disease)) &&
     (selectedStages.length === 0 || true)
   )
 
@@ -178,23 +170,23 @@ export function ExploreProjectsComponent() {
               <Card key={project.id}>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-lg font-medium">
-                    {project.projectName}
+                    {project.name}
                   </CardTitle>
                   {/* You can add an icon based on disease category */}
                 </CardHeader>
                 <CardContent>
                   <div className="text-sm text-muted-foreground mb-4">{project.description}</div>
                   <div className="flex justify-between items-center mb-2">
-                    <Badge variant="outline">{project.diseaseCategory}</Badge>
+                    <Badge variant="outline">{project.disease}</Badge>
                     {/* Add more badges as needed */}
                   </div>
                   <div className="flex items-center space-x-4 text-sm text-muted-foreground">
                     <div className="flex items-center">
                       <Users className="mr-1 h-3 w-3" />
-                      {project.collaborators.length} members
+                      {project.members.length} members
                     </div>
                     <Separator orientation="vertical" className="h-4" />
-                    <div>Lead: {project.author.name}</div>
+                    <div>Lead: {project.owner.name}</div>
                   </div>
                 </CardContent>
                 <CardFooter>
@@ -212,23 +204,23 @@ export function ExploreProjectsComponent() {
               <Card key={project.id}>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-lg font-medium">
-                    {project.projectName}
+                    {project.name}
                   </CardTitle>
                   {/* You can add an icon based on disease category */}
                 </CardHeader>
                 <CardContent>
                   <div className="text-sm text-muted-foreground mb-4">{project.description}</div>
                   <div className="flex justify-between items-center mb-2">
-                    <Badge variant="outline">{project.diseaseCategory}</Badge>
+                    <Badge variant="outline">{project.disease}</Badge>
                     {/* Add more badges as needed */}
                   </div>
                   <div className="flex items-center space-x-4 text-sm text-muted-foreground">
                     <div className="flex items-center">
                       <Users className="mr-1 h-3 w-3" />
-                      {project.collaborators.length} members
+                      {project.members.length} members
                     </div>
                     <Separator orientation="vertical" className="h-4" />
-                    <div>Lead: {project.author.name}</div>
+                    <div>Lead: {project.owner.name}</div>
                   </div>
                 </CardContent>
                 <CardFooter>

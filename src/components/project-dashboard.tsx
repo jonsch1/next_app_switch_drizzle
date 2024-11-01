@@ -21,6 +21,7 @@ import {
   ResponsiveContainer,
 } from "recharts"
 import { LoadingSpinner } from '@/components/ui/spinner'
+import { getProjectWithStats } from "@/server/queries"
 
 interface Activity {
   id: number;
@@ -44,9 +45,8 @@ export function ProjectDashboardComponent() {
   React.useEffect(() => {
     const fetchProject = async () => {
       try {
-        const response = await fetch(`/api/project/${params.id}`)
-        if (!response.ok) throw new Error("Failed to fetch project")
-        const data = await response.json()
+        const data = await getProjectWithStats(Number(params.id))
+        if (!data) throw new Error("Failed to fetch project")
         setProject(data)
       } catch (error) {
         console.error("Error fetching project:", error)

@@ -6,6 +6,7 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { ThemeProvider } from "@/components/theme-provider"
 import { SessionProvider } from "next-auth/react"
 import { Toaster } from "@/components/ui/sonner"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
@@ -29,6 +30,8 @@ export default function RootLayout({
                     >
             <SidebarProvider>
               <RareDiseasePlatformSidebar>
+              <SidebarTrigger className="absolute top-4 right-4 lg:hidden" />
+
                 <main className="p-4 container mx-auto">
                     {children}
                   <Toaster />

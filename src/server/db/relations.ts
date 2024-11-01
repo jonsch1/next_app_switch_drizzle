@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { users, profiles, content, comments, projects, upvotes, projectMembers } from './schema';
+import { users, profiles, content, comments, projects, upvotes, projectMembers, statements, curations } from './schema';
 
 export const usersRelations = relations(users, ({ many, one }) => ({
     profile: one(profiles, {
@@ -49,6 +49,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
     }),
     members: many(projectMembers),
     content: many(content),
+    curations: many(curations),
   }));
   
   export const projectMembersRelations = relations(projectMembers, ({ one }) => ({
@@ -70,5 +71,20 @@ export const upvotesRelations = relations(upvotes, ({ one }) => ({
   comment: one(comments, {
     fields: [upvotes.entityId],
     references: [comments.id],
+  }),
+}));
+
+export const curationsRelations = relations(curations, ({ one }) => ({
+  statement: one(statements, {
+    fields: [curations.statementId],
+    references: [statements.id],
+  }),
+  project: one(projects, {
+    fields: [curations.projectId],
+    references: [projects.id],
+  }),
+  curator: one(profiles, {
+    fields: [curations.curatorId],
+    references: [profiles.id],
   }),
 }));

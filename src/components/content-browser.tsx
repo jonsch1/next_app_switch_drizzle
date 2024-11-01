@@ -4,6 +4,9 @@ import * as React from "react"
 import { Brain, FileText, MessageSquare, Search, ThumbsUp } from "lucide-react"
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
+import { Command } from 'cmdk'
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { X, Filter, ChevronDown } from 'lucide-react'
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -14,8 +17,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CreateContentDialog } from "@/components/create-content-dialog"
 import { Label } from "@/components/ui/label"
-import { getContentByFilter } from '@/server/queries'
-
+import { getContentByFilter, getProjects } from '@/server/queries'
+import { Button } from "@/components/ui/button"
 interface ContentBrowserProps {
   initialType?: 'discussion' | 'hypothesis' | 'educational'
   projectId?: string
@@ -46,6 +49,12 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
       if (projectParam) {
         setSelectedProject(projectParam)
       }
+      
+      // Handle search
+      const searchParam = searchParams.get('search')
+      if (searchParam) {
+        setSearchQuery(searchParam)
+      }
     }, 250)
 
     return () => clearTimeout(timer)
@@ -63,6 +72,12 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
   const [contents, setContents] = React.useState<Awaited<ReturnType<typeof getContentByFilter>>>([])
   const [isLoading, setIsLoading] = React.useState(false)
   const [projects, setProjects] = React.useState<{ id: string, projectName: string }[]>([])
+  const [isFilterOpen, setIsFilterOpen] = React.useState(false)
+  const [projectSearch, setProjectSearch] = React.useState('')
+
+  const filteredProjects = projects.filter((project) =>
+    project.projectName.toLowerCase().includes(projectSearch.toLowerCase())
+  )
 
   // New fetchContent function
   const fetchContent = React.useCallback(async () => {
@@ -87,6 +102,24 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
   React.useEffect(() => {
     fetchContent()
   }, [fetchContent])
+
+  // Add useEffect to fetch projects when component mounts
+  React.useEffect(() => {
+    async function fetchProjects() {
+      try {
+        const projectsData = await getProjects()
+        setProjects(projectsData.map(p => ({
+          id: p.id.toString(),
+          projectName: p.name
+        })))
+      } catch (error) {
+        console.error('Error fetching projects:', error)
+        toast.error('Failed to load projects')
+      }
+    }
+
+    fetchProjects()
+  }, [])
 
   const getContentIcon = (type: string) => {
     if (type === 'discussion') return <MessageSquare className="h-4 w-4" />
@@ -129,21 +162,126 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
     setIsCreateDialogOpen(open)   
   }
 
+  // Add search handler to update URL
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value)
+    updateURL({ search: value || '' })
+  }
+
   return (
     <div className="container mx-auto">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between flex-col lg:flex-row lg:space-y-0 space-y-4 items-center mb-6">
         {/* Content type tabs */}
         <Tabs 
           defaultValue={selectedType} 
           value={selectedType} 
           onValueChange={handleTypeChange as (value: string) => void}
+          className="xl:w-1/3 lg:w-1/2 w-full"
         >
-          <TabsList>
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="discussion">Discussions</TabsTrigger>
             <TabsTrigger value="hypothesis">Hypotheses</TabsTrigger>
             <TabsTrigger value="educational">Educational</TabsTrigger>
           </TabsList>
         </Tabs>
+
+        {/* Project selection */}
+        <div className="flex items-center space-x-4">
+
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="justify-between min-w-[200px] max-w-[300px]">
+                  {selectedProject === 'all' ? 'All Projects' : projects.find(p => p.id === selectedProject)?.projectName || 'Select Project'}
+                  <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="p-0 w-[300px]">
+                <Command>
+                  <Input
+                    placeholder="Search projects..."
+                    value={projectSearch}
+                    onChange={(e) => setProjectSearch(e.target.value)}
+                    className="border-none focus:ring-0 mb-2"
+                  />
+                  <ul className="max-h-[300px] overflow-y-auto">
+                    <li 
+                      key="all" 
+                      className="cursor-pointer px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground" 
+                      onClick={() => handleProjectChange('all')}
+                    >
+                      All Projects
+                    </li>
+                    {filteredProjects.map((project) => (
+                      <li
+                        key={project.id}
+                        className="cursor-pointer px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                        onClick={() => handleProjectChange(project.id)}
+                      >
+                        {project.projectName}
+                      </li>
+                    ))}
+                  </ul>
+                </Command>
+              </PopoverContent>
+            </Popover>
+
+        {/* Filter and search */}
+        <div className="relative">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setIsFilterOpen(!isFilterOpen)}
+            aria-label="Toggle filters"
+          >
+            <Filter className="h-4 w-4" />
+          </Button>
+          {isFilterOpen && (
+            <div className="absolute right-0 mt-2 w-72 z-10">
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-semibold">Filters</h3>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setIsFilterOpen(false)}
+                      className="h-6 w-6"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="sortBy">Sort by</Label>
+                      <Select value={sortBy} onValueChange={handleSortChange}>
+                        <SelectTrigger id="sortBy">
+                          <SelectValue placeholder="Sort by" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="recent">Most Recent</SelectItem>
+                          <SelectItem value="popular">Most Popular</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="search">Search</Label>
+                      <div className="relative">
+                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          id="search"
+                          placeholder="Search..."
+                          value={searchQuery}
+                          onChange={(e) => handleSearchChange(e.target.value)}
+                          className="pl-8"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </div>
         <CreateContentDialog
           open={isCreateDialogOpen}
           onOpenChange={handleDialogChange}
@@ -151,60 +289,32 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
           projectId={selectedProject !== 'all' ? selectedProject : undefined}
           projects={projects}
           onSuccess={fetchContent}
+          defaultProjectId={projectId}
         />
       </div>
-
-      {/* Filters */}
-      <Card className="my-6">
-        <CardContent className="pt-6">
-          <div className="flex space-x-4">
-            <div className="flex-1">
-              <Label htmlFor="projectFilter">Filter by Project</Label>
-              <Select value={selectedProject} onValueChange={handleProjectChange}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Filter by project" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {projects.map((project) => (
-                    <SelectItem key={project.id} value={project.id}>
-                      {project.projectName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex-1">
-              <Label htmlFor="sortBy">Sort by</Label>
-              <Select value={sortBy} onValueChange={handleSortChange}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Sort by" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="recent">Most Recent</SelectItem>
-                  <SelectItem value="popular">Most Popular</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex-1">
-              <Label htmlFor="search">Search</Label>
-              <div className="relative">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="search"
-                  placeholder="Search..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-8"
-                />
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Content cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {/* Create New Card - Always shown first */}
+        <Card 
+          className="border-dashed border-2 bg-muted/50 hover:bg-muted/80 cursor-pointer transition-colors"
+          onClick={() => setIsCreateDialogOpen(true)}
+        >
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center space-y-4">
+            <div className="rounded-full bg-primary/10 p-4">
+              {getContentIcon(selectedType)}
+            </div>
+            <div className="space-y-2">
+              <h3 className="font-semibold">Create New {selectedType}</h3>
+              <p className="text-sm text-muted-foreground">
+                Share your thoughts and contribute to the community!
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Existing Content Cards */}
         {contents.map((content) => (
           <Card 
             key={content.id} 
