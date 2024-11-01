@@ -1,6 +1,8 @@
 import NextAuth from "next-auth"
 import Google from "next-auth/providers/google"
-import prisma from "./lib/prisma"
+import { db } from "./server/db"
+import { users, profiles } from "./server/db/schema"
+import { eq } from "drizzle-orm"
 
 export const {
   handlers,
@@ -22,22 +24,27 @@ export const {
       
       try {
         // Check if user exists
-        const existingUser = await prisma.user.findUnique({
-          where: { email: user.email }
-        })
+        const existingUser = await db.select()
+          .from(users)
+          .where(eq(users.email, user.email))
+          .limit(1)
 
-        if (!existingUser) {
+        if (!existingUser.length) {
           // Create new user and profile if they don't exist
-          const newUser = await prisma.user.create({
-            data: {
-              email: user.email,
-              name: user.name ?? undefined,
-              Profile: {
-                create: {
-                  bio: null // Default empty bio
-                }
-              }
-            }
+          await db.insert(users).values({
+            email: user.email,
+            name: user.name ?? null,
+          })
+
+          // Create profile separately
+          const [newUser] = await db.select()
+            .from(users)
+            .where(eq(users.email, user.email))
+            .limit(1)
+
+          await db.insert(profiles).values({
+            id: newUser.id,
+            username: user.name ?? null,
           })
         }
         
@@ -49,12 +56,13 @@ export const {
     },
     async session({ session, token }) {
       if (session?.user) {
-        const dbUser = await prisma.user.findUnique({
-          where: { email: session.user.email ?? "" }
-        })
+        const [dbUser] = await db.select()
+          .from(users)
+          .where(eq(users.email, session.user.email ?? ""))
+          .limit(1)
         
         if (dbUser) {
-          session.user.id = dbUser.id
+          session.user.id = dbUser.id.toString()
         }
       }
       return session

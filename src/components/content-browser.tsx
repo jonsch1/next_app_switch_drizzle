@@ -13,13 +13,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CreateContentDialog } from "@/components/create-content-dialog"
-import type { ContentWithRelations } from '@/lib/types/content'
 import { Label } from "@/components/ui/label"
+import { getContentByFilter } from '@/server/queries'
 
 interface ContentBrowserProps {
   initialType?: 'discussion' | 'hypothesis' | 'educational'
   projectId?: string
 }
+
 
 export function ContentBrowser({ initialType = 'discussion', projectId }: ContentBrowserProps) {
   const router = useRouter()
@@ -32,12 +33,6 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
       const typeParam = searchParams.get('type') as typeof initialType
       if (typeParam && ['discussion', 'hypothesis', 'educational'].includes(typeParam)) {
         setSelectedType(typeParam)
-      }
-      
-      // Handle subtype
-      const subtypeParam = searchParams.get('subtype')
-      if (subtypeParam) {
-        setSelectedSubtype(subtypeParam)
       }
       
       // Handle sort
@@ -59,68 +54,44 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
   const [selectedType, setSelectedType] = React.useState(
     searchParams.get('type') as typeof initialType || initialType
   )
-  const [selectedSubtype, setSelectedSubtype] = React.useState<string>(
-    searchParams.get('subtype') || 'all'
-  )
   const [selectedProject, setSelectedProject] = React.useState(projectId || 'all')
   const [sortBy, setSortBy] = React.useState<'recent' | 'popular' | 'views'>(
     (searchParams.get('sort') || 'recent') as 'recent' | 'popular' | 'views'
   )
   const [searchQuery, setSearchQuery] = React.useState(searchParams.get('search') || '')
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false)
-  const [contents, setContents] = React.useState<ContentWithRelations[]>([])
+  const [contents, setContents] = React.useState<Awaited<ReturnType<typeof getContentByFilter>>>([])
   const [isLoading, setIsLoading] = React.useState(false)
   const [projects, setProjects] = React.useState<{ id: string, projectName: string }[]>([])
 
-  // Fetch projects from the API
-  React.useEffect(() => {
-    const fetchProjects = async () => {
-      try {
-        const response = await fetch('/api/projects/getAll')
-        const data = await response.json()
-        setProjects(data)
-      } catch (error) {
-        console.error('Error fetching projects:', error)
-        toast.error('Failed to load projects')
-      }
+  // New fetchContent function
+  const fetchContent = React.useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const data = await getContentByFilter({
+        type: selectedType,
+        projectId: selectedProject !== 'all' ? selectedProject : undefined,
+        search: searchQuery || undefined,
+        sort: sortBy === 'views' ? 'recent' : sortBy
+      })
+      setContents(data as Awaited<ReturnType<typeof getContentByFilter>>)
+    } catch (error) {
+      console.error('Error fetching content:', error)
+      toast.error('Failed to load content')
+    } finally {
+      setIsLoading(false)
     }
+  }, [selectedType, selectedProject, searchQuery, sortBy])
 
-    fetchProjects()
-  }, [])
-
-  // Fetch content based on filters
+  // Update the useEffect to use fetchContent
   React.useEffect(() => {
-    const loadContent = async () => {
-      setIsLoading(true)
-      try {
-        const response = await fetch('/api/content?' + new URLSearchParams({
-          type: selectedType,
-          subtype: selectedSubtype !== 'all' ? selectedSubtype : '',
-          projectId: selectedProject !== 'all' ? selectedProject : '',
-          search: searchQuery,
-          sort: sortBy
-        }))
-        const data = await response.json()
-        setContents(data)
-      } catch (error) {
-        console.error('Error fetching content:', error)
-        toast.error('Failed to load content')
-      } finally {
-        setIsLoading(false)
-      }
-    }
+    fetchContent()
+  }, [fetchContent])
 
-    loadContent()
-  }, [selectedType, selectedSubtype, selectedProject, searchQuery, sortBy])
-
-  const getContentIcon = (type: string, subtype?: string) => {
+  const getContentIcon = (type: string) => {
     if (type === 'discussion') return <MessageSquare className="h-4 w-4" />
     if (type === 'hypothesis') return <Brain className="h-4 w-4" />
-    if (type === 'educational') {
-      if (subtype === 'video') return <Video className="h-4 w-4" />
-      if (subtype === 'webinar') return <Users className="h-4 w-4" />
-      return <FileText className="h-4 w-4" />
-    }
+    if (type === 'educational') return <FileText className="h-4 w-4" /> 
     return null
   }
 
@@ -140,12 +111,7 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
   // Update handlers to modify URL
   const handleTypeChange = (value: typeof selectedType) => {
     setSelectedType(value)
-    updateURL({ type: value, subtype: '' }) // Clear subtype when type changes
-  }
-
-  const handleSubtypeChange = (value: string) => {
-    setSelectedSubtype(value)
-    updateURL({ subtype: value === 'all' ? '' : value })
+    updateURL({ type: value })
   }
 
   const handleSortChange = (value: typeof sortBy) => {
@@ -160,29 +126,8 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
 
   // Update dialog state handler to update URL
   const handleDialogChange = (open: boolean) => {
-    setIsCreateDialogOpen(open)
+    setIsCreateDialogOpen(open)   
   }
-
-  // Add this function to reload content
-  const refreshContent = React.useCallback(async () => {
-    setIsLoading(true)
-    try {
-      const response = await fetch('/api/content?' + new URLSearchParams({
-        type: selectedType,
-        subtype: selectedSubtype !== 'all' ? selectedSubtype : '',
-        projectId: selectedProject !== 'all' ? selectedProject : '',
-        search: searchQuery,
-        sort: sortBy
-      }))
-      const data = await response.json()
-      setContents(data)
-    } catch (error) {
-      console.error('Error fetching content:', error)
-      toast.error('Failed to load content')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [selectedType, selectedSubtype, selectedProject, searchQuery, sortBy])
 
   return (
     <div className="container mx-auto">
@@ -204,21 +149,9 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
           onOpenChange={handleDialogChange}
           type={selectedType}
           projectId={selectedProject !== 'all' ? selectedProject : undefined}
-          onSuccess={refreshContent}
+          onSuccess={fetchContent}
         />
       </div>
-
-      {/* Subtype tabs for educational content */}
-      {selectedType === 'educational' && (
-        <Tabs defaultValue={selectedSubtype} value={selectedSubtype} onValueChange={handleSubtypeChange} className="mt-4">
-          <TabsList>
-            <TabsTrigger value="all">All</TabsTrigger>
-            <TabsTrigger value="article">Articles</TabsTrigger>
-            <TabsTrigger value="video">Videos</TabsTrigger>
-            <TabsTrigger value="webinar">Webinars</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      )}
 
       {/* Filters */}
       <Card className="my-6">
@@ -249,7 +182,6 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
                 <SelectContent>
                   <SelectItem value="recent">Most Recent</SelectItem>
                   <SelectItem value="popular">Most Popular</SelectItem>
-                  <SelectItem value="views">Most Viewed</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -280,10 +212,10 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
           >
             <CardHeader className="flex flex-row items-center gap-4">
               <Avatar>
-                <AvatarImage src={`https://avatar.vercel.sh/${content.author.email || 'Guest'}`} alt={content.author.name || 'Guest'} />
+                <AvatarImage src={`https://avatar.vercel.sh/${content.author!.name || 'Guest'}`} alt={content.author!.name || 'Guest'} />
               </Avatar>
               <div className="flex flex-col">
-                <CardTitle className="text-lg">{content.author.name}</CardTitle>
+                <CardTitle className="text-lg">{content.author!.name}</CardTitle>
                 <CardDescription>{new Date(content.createdAt).toLocaleDateString()}</CardDescription>
               </div>
             </CardHeader>
@@ -291,26 +223,16 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
               <h3 className="text-xl font-semibold mb-2">{content.title}</h3>
               <div className="flex space-x-2 mb-2">
                 <Badge>
-                  {getContentIcon(content.type, content.subtype ?? undefined)}
+                  {getContentIcon(content.type)}
                   <span className="ml-1">
-                    {content.type === 'educational' ? content.subtype : content.type}
+                    {content.type}
                   </span>
                 </Badge>
-                {content.type === 'educational' && (
-                  <Badge variant="outline">{content.difficulty}</Badge>
-                )}
                 {content.projectId && (
                   <Badge variant="secondary">{content.project?.projectName}</Badge>
                 )}
               </div>
               <p className="text-muted-foreground line-clamp-3">{content.content}</p>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {content.tags.map((tag) => (
-                  <Badge key={tag.id} variant="outline">
-                    {tag.name}
-                  </Badge>
-                ))}
-              </div>
             </CardContent>
             <CardFooter className="flex justify-between">
               <div className="flex space-x-4 text-muted-foreground">
@@ -321,10 +243,6 @@ export function ContentBrowser({ initialType = 'discussion', projectId }: Conten
                 <span className="flex items-center">
                   <ThumbsUp className="mr-1 h-4 w-4" />
                   {content._count.upvotes}
-                </span>
-                <span className="flex items-center">
-                  <Users className="mr-1 h-4 w-4" />
-                  {content.views}
                 </span>
               </div>
             </CardFooter>

@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
-import { Brain, FileText, MessageSquare, ThumbsUp, Video, Users, ExternalLink, MoreVertical, Pencil, Trash2 } from "lucide-react"
+import { Brain, FileText, MessageSquare, ThumbsUp, Video, Users, ExternalLink, MoreVertical, Pencil, Trash2, MoreHorizontal } from "lucide-react"
 import { toast } from 'sonner'
+import { useState } from 'react'
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -24,7 +25,6 @@ import {
 } from "@/components/ui/form"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import type { ContentWithRelations } from '@/lib/types/content'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +39,10 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { LoadingSpinner } from '@/components/ui/spinner'
+import { getContentWithComments } from "@/server/queries"
+import { createComment, updateComment, deleteComment } from "@/server/mutations"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+
 const commentSchema = z.object({
   content: z.string().min(1, "Comment cannot be empty").max(1000, "Comment is too long (max 1000 characters)"),
 })
@@ -56,9 +60,52 @@ const contentSchema = z.object({
 
 type ContentFormData = z.infer<typeof contentSchema>
 
+// Add this type definition
+type CommentType = {
+  id: number
+  text: string
+  author: {
+    id: number | null
+    username: string | null
+  }
+  createdAt: string
+  parentId: number | null
+  upvotes: any[]
+  replies: CommentType[]
+}
+
+// Add this helper function to transform flat comments into nested structure
+const buildCommentTree = (comments: any[]): CommentType[] => {
+  const commentMap = new Map()
+  const roots: CommentType[] = []
+
+  // First pass: Create all comment objects and store in map
+  comments.forEach(comment => {
+    commentMap.set(comment.id, {
+      ...comment,
+      replies: []
+    })
+  })
+
+  // Second pass: Build the tree structure
+  comments.forEach(comment => {
+    const commentWithReplies = commentMap.get(comment.id)
+    if (comment.parentId === null) {
+      roots.push(commentWithReplies)
+    } else {
+      const parent = commentMap.get(comment.parentId)
+      if (parent) {
+        parent.replies.push(commentWithReplies)
+      }
+    }
+  })
+
+  return roots
+}
+
 export function ContentViewer({ contentId }: { contentId: string }) {
   const router = useRouter()
-  const [content, setContent] = React.useState<ContentWithRelations | null>(null)
+  const [content, setContent] = React.useState<Awaited<ReturnType<typeof getContentWithComments>> | null>(null)
   const [isLoading, setIsLoading] = React.useState(true)
   const [votes, setVotes] = React.useState<{
     content: boolean;
@@ -83,31 +130,51 @@ export function ContentViewer({ contentId }: { contentId: string }) {
     defaultValues: {
       title: content?.title || "",
       content: content?.content || "",
-      evidence: content?.evidence || "",
-      experiment: content?.experiment || "",
-      resourceUrl: content?.resourceUrl || "",
     },
   })
+  console.log(content?.comments)
+  // Add new form for replies
+  const replyForm = useForm<CommentFormData>({
+    resolver: zodResolver(commentSchema),
+    defaultValues: { content: "" },
+  })
+
+  // Add state for collapsed comments
+  const [collapsedComments, setCollapsedComments] = React.useState<Set<string>>(new Set())
+
+  // Add toggle function
+  const toggleComment = (commentId: string) => {
+    setCollapsedComments(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(commentId)) {
+        newSet.delete(commentId)
+      } else {
+        newSet.add(commentId)
+      }
+      return newSet
+    })
+  }
 
   // Fetch content data
   React.useEffect(() => {
     const loadContent = async () => {
       setIsLoading(true)
       try {
-        const response = await fetch(`/api/content/${contentId}`)
-        const data = await response.json()
-        setContent(data)
+        const data = await getContentWithComments(parseInt(contentId))
+        if (!data) throw new Error('Content not found')
         
-        // Initialize votes state based on hasVoted fields
+        // Initialize votes state based on upvotes arrays
         setVotes({
-          content: data.hasVoted,
-          comments: Object.fromEntries([
-            ...data.comments.map((comment: any) => [comment.id, comment.hasVoted]),
-            ...data.comments.flatMap((comment: any) => 
-              (comment.replies || []).map((reply: any) => [reply.id, reply.hasVoted])
-            )
-          ])
+          content: data.upvotes.some(v => v.userId === session?.user?.id),
+          comments: Object.fromEntries(
+            data.comments.map(comment => [
+              comment.id, 
+              comment.upvotes.some(v => v.userId === session?.user?.id)
+            ])
+          )
         })
+        
+        setContent(data)
       } catch (error) {
         console.error('Error fetching content:', error)
         toast.error('Failed to load content')
@@ -117,7 +184,7 @@ export function ContentViewer({ contentId }: { contentId: string }) {
     }
 
     loadContent()
-  }, [contentId])
+  }, [contentId, session?.user?.id])
 
   // Add this effect to fetch session
   React.useEffect(() => {
@@ -129,69 +196,6 @@ export function ContentViewer({ contentId }: { contentId: string }) {
     loadSession()
   }, [])
 
-  const onSubmit = async (values: CommentFormData) => {
-    try {
-      const response = await fetch('/api/content/comments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contentId,
-          comment: values.content,
-        }),
-      })
-
-      if (!response.ok) throw new Error('Failed to post comment')
-      
-      // Refresh content data
-      const updatedContent = await fetch(`/api/content/${contentId}`).then(res => res.json())
-      setContent(updatedContent)
-      
-      form.reset()
-      toast.success('Comment posted successfully')
-    } catch (error) {
-      toast.error('Failed to post comment')
-      console.error('Error posting comment:', error)
-    }
-  }
-
-  const handleVote = async (commentId?: string) => {
-    try {
-      const hasVote = commentId ? votes.comments[commentId] : votes.content
-
-      if (hasVote) {
-        await fetch(`/api/content/votes?${commentId ? 'commentId=' + commentId : 'contentId=' + contentId}`, {
-          method: 'DELETE',
-        })
-      } else {
-        await fetch('/api/content/votes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contentId: commentId ? undefined : contentId,
-            commentId,
-          }),
-        })
-      }
-
-      // Update local state
-      if (commentId) {
-        setVotes(prev => ({
-          ...prev,
-          comments: { ...prev.comments, [commentId]: !hasVote }
-        }))
-      } else {
-        setVotes(prev => ({ ...prev, content: !hasVote }))
-      }
-
-      // Refresh content data
-      const updatedContent = await fetch(`/api/content/${contentId}`).then(res => res.json())
-      setContent(updatedContent)
-    } catch (error) {
-      toast.error('Failed to register vote')
-      console.error('Error voting:', error)
-    }
-  }
-
   const getContentIcon = () => {
     if (!content) return null
     switch (content.type) {
@@ -200,78 +204,7 @@ export function ContentViewer({ contentId }: { contentId: string }) {
       case 'hypothesis':
         return <Brain className="h-4 w-4" />
       case 'educational':
-        switch (content.subtype) {
-          case 'video':
-            return <Video className="h-4 w-4" />
-          case 'webinar':
-            return <Users className="h-4 w-4" />
-          default:
-            return <FileText className="h-4 w-4" />
-        }
-      default:
         return <FileText className="h-4 w-4" />
-    }
-  }
-
-  const handleEditContent = async (values: ContentFormData) => {
-    try {
-      const response = await fetch(`/api/content/${contentId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values),
-      })
-      
-      if (!response.ok) throw new Error('Failed to update content')
-      
-      const updatedContent = await response.json()
-      setContent(updatedContent)
-      setEditingContent(false)
-      toast.success('Content updated successfully')
-      router.refresh() // Add this line to refresh the page data
-    } catch (error) {
-      toast.error('Failed to update content')
-      console.error('Error updating content:', error)
-    }
-  }
-
-  const handleEditComment = async (commentId: string, newContent: string) => {
-    try {
-      const response = await fetch(`/api/content/comments/${commentId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: newContent }),
-      })
-      
-      if (!response.ok) throw new Error('Failed to update comment')
-      
-      // Refresh content data
-      const updatedContent = await fetch(`/api/content/${contentId}`).then(res => res.json())
-      setContent(updatedContent)
-      setEditingComment(null)
-      toast.success('Comment updated successfully')
-    } catch (error) {
-      toast.error('Failed to update comment')
-      console.error('Error updating comment:', error)
-    }
-  }
-
-  const handleDeleteComment = async (commentId: string) => {
-    if (!window.confirm('Are you sure you want to delete this comment?')) return
-    
-    try {
-      const response = await fetch(`/api/content/comments/${commentId}`, {
-        method: 'DELETE',
-      })
-      
-      if (!response.ok) throw new Error('Failed to delete comment')
-      
-      // Refresh content data
-      const updatedContent = await fetch(`/api/content/${contentId}`).then(res => res.json())
-      setContent(updatedContent)
-      toast.success('Comment deleted successfully')
-    } catch (error) {
-      toast.error('Failed to delete comment')
-      console.error('Error deleting comment:', error)
     }
   }
 
@@ -281,45 +214,111 @@ export function ContentViewer({ contentId }: { contentId: string }) {
       contentForm.reset({
         title: content.title,
         content: content.content,
-        evidence: content.evidence || "",
-        experiment: content.experiment || "",
-        resourceUrl: content.resourceUrl || "",
       })
     }
   }, [content, contentForm])
-
-  const handleReply = async (commentId: string, values: CommentFormData) => {
-    try {
-      const response = await fetch('/api/content/comments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contentId,
-          comment: values.content,
-          parentId: commentId,
-        }),
-      })
-
-      if (!response.ok) throw new Error('Failed to post reply')
-      
-      // Refresh content data
-      const updatedContent = await fetch(`/api/content/${contentId}`).then(res => res.json())
-      setContent(updatedContent)
-      
-      form.reset()
-      setReplyingTo(null)
-      toast.success('Reply posted successfully')
-    } catch (error) {
-      toast.error('Failed to post reply')
-      console.error('Error posting reply:', error)
-    }
-  }
 
   if (isLoading) return (        <div className="absolute inset-0 flex items-center justify-center">
     <LoadingSpinner size={40} />
   </div>)
   if (!content) return <div>Content not found</div>
 
+  const handleEditContent = async (values: ContentFormData) => {
+    console.log(values)
+  }
+  const handleDeleteContent = async () => {
+    console.log('delete content')
+  }
+  const handleEditComment = async (commentId: string, values: CommentFormData) => {
+    try {
+      const updatedComment = await updateComment(parseInt(commentId), values.content)
+      
+      // Update local state
+      setContent(prev => prev ? {
+        ...prev,
+        comments: prev.comments.map(comment => 
+          comment.id === parseInt(commentId)
+            ? { ...comment, text: values.content }
+            : comment
+        )
+      } : null)
+      
+      setEditingComment(null)
+      toast.success('Comment updated successfully')
+    } catch (error) {
+      console.error(error)
+      toast.error('Failed to update comment')
+    }
+  }
+  const handleDeleteComment = async (commentId: string) => {
+    try {
+      await deleteComment(parseInt(commentId))
+      
+      // Update local state
+      setContent(prev => prev ? {
+        ...prev,
+        comments: prev.comments.filter(comment => 
+          comment.id !== parseInt(commentId)
+        )
+      } : null)
+      
+      toast.success('Comment deleted successfully')
+    } catch (error) {
+      console.error(error)
+      toast.error('Failed to delete comment')
+    }
+  }
+  const handleVote = async (commentId: string) => {
+    console.log(commentId)
+  }
+  const handleReply = async (commentId: string, values: CommentFormData) => {
+    try {
+      const newReply = await createComment({
+        contentId: parseInt(contentId), 
+        text: values.content,
+        parentId: parseInt(commentId)
+      })
+      
+      setContent(prev => prev ? {
+        ...prev,
+        comments: [...prev.comments, {
+          ...newReply[0],
+          author: session.user,
+          upvotes: []
+        }]
+              } : null)
+      form.reset()
+      setReplyingTo(null)
+      toast.success('Reply posted successfully')
+    } catch (error) {
+      console.error(error)
+      toast.error('Failed to post reply')
+    }
+  }
+  const onSubmit = async (values: CommentFormData) => {
+    try {
+      const newComment = await createComment({
+        contentId: parseInt(contentId),
+        text: values.content,
+        parentId: null
+      })
+      
+      setContent(prev => prev ? {
+        ...prev,
+        comments: [...prev.comments, {
+          ...newComment[0],
+          author: session.user,
+          upvotes: []
+        }]
+      } : null)
+      
+      form.reset()
+      toast.success('Comment posted successfully')
+    } catch (error) {
+      console.error(error)
+      toast.error('Failed to post comment')
+    }
+  }
   return (
     <div className="container mx-auto">
       <Card>
@@ -328,7 +327,7 @@ export function ContentViewer({ contentId }: { contentId: string }) {
             <div>
               <CardTitle className="text-2xl">{content.title}</CardTitle>
               <CardDescription>
-                Posted by {content.author.name} on {new Date(content.createdAt).toLocaleDateString()}
+                Posted by {content.author.username} on {new Date(content.createdAt).toLocaleDateString()}
                 {content.project && (
                   <> in project <span className="font-medium">{content.project.projectName}</span></>
                 )}
@@ -336,9 +335,9 @@ export function ContentViewer({ contentId }: { contentId: string }) {
             </div>
             <div className="flex items-center space-x-2">
               <Avatar>
-                <AvatarImage src={`https://avatar.vercel.sh/${content.author.email || 'Guest'}`} alt={content.author.name || 'Guest'} />
+                <AvatarImage src={`https://avatar.vercel.sh/${content.author.username || 'Guest'}`} alt={content.author.username || 'Guest'} />
               </Avatar>
-              {session?.user?.email === content.author.email && (
+              {session?.user?.id === content.author.id && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm">
@@ -359,331 +358,24 @@ export function ContentViewer({ contentId }: { contentId: string }) {
         <CardContent>
           <div className="space-y-4">
             <p>{content.content}</p>
-
-            {/* Hypothesis-specific content */}
-            {content.type === 'hypothesis' && content.evidence && (
-              <div>
-                <h3 className="font-semibold mb-2">Supporting Evidence</h3>
-                <p>{content.evidence}</p>
-              </div>
-            )}
-            {content.type === 'hypothesis' && content.experiment && (
-              <div>
-                <h3 className="font-semibold mb-2">Proposed Experiment</h3>
-                <p>{content.experiment}</p>
-              </div>
-            )}
-
-            {/* Educational-specific content */}
-            {content.type === 'educational' && (
-              <div className="space-y-2">
-                {content.difficulty && (
-                  <Badge variant="outline">
-                    Difficulty: {content.difficulty}
-                  </Badge>
-                )}
-                {content.resourceUrl && (
-                  <Button variant="outline" asChild>
-                    <a href={content.resourceUrl} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      View Resource
-                    </a>
-                  </Button>
-                )}
-              </div>
-            )}
-
-            <div className="flex flex-wrap gap-2">
-              {content.tags.map((tag) => (
-                <Badge key={tag.id} variant="secondary">
-                  {tag.name}
-                </Badge>
-              ))}
-            </div>
-
             <div className="flex items-center space-x-4">
               <Button 
                 variant="outline" 
                 size="sm" 
-                onClick={() => handleVote()}
+                // onClick={() => handleVote()}
                 className={votes.content ? 'bg-green-100' : ''}
               >
                 <ThumbsUp className="mr-2 h-4 w-4" />
-                {content._count.upvotes}
+                {content.upvotes.length}
               </Button>
               <Badge variant="outline">
                 {getContentIcon()}
                 <span className="ml-2">
-                  {content.type === 'educational' ? content.subtype : content.type}
+                  {content.type}
                 </span>
               </Badge>
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Comments section */}
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Discussion</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ScrollArea className={`${content?.comments.length === 0 ? 'h-[200px]' : 'h-[400px]'} pr-4`}>
-            {content?.comments.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full py-6 text-center">
-                <MessageSquare className="h-12 w-12 text-muted-foreground/50 mb-4" />
-                <p className="text-lg font-medium text-muted-foreground">No comments yet</p>
-                <p className="text-sm text-muted-foreground">Be the first to share your thoughts!</p>
-              </div>
-            ) : (
-              content?.comments.map((comment, index) => (
-                <div key={comment.id} className="mb-4">
-                  <div className="flex items-start space-x-4">
-                    <Avatar>
-                      <AvatarImage src={`https://avatar.vercel.sh/${comment.author.email || 'Guest'}`} alt={comment.author.name || 'Guest'} />
-                    </Avatar>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <p className="font-semibold">{comment.author.name}</p>
-                          {session?.user?.email === comment.author.email && (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="sm">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => setEditingComment(comment.id)}>
-                                  <Pencil className="mr-2 h-4 w-4" />
-                                  Edit
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleDeleteComment(comment.id)}>
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          )}
-                        </div>
-                        <p className="text-sm text-muted-foreground">
-                          {new Date(comment.createdAt).toLocaleDateString()}
-                        </p>
-                      </div>
-                      {editingComment === comment.id ? (
-                        <Form {...form}>
-                          <form onSubmit={form.handleSubmit((values) => handleEditComment(comment.id, values.content))}>
-                            <FormField
-                              control={form.control}
-                              name="content"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormControl>
-                                    <Textarea 
-                                      {...field} 
-                                      defaultValue={comment.comment}  // Remove this
-                                      value={field.value || comment.comment}  // Add this
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <div className="mt-2 space-x-2">
-                              <Button type="submit" size="sm">Save</Button>
-                              <Button type="button" variant="ghost" size="sm" onClick={() => setEditingComment(null)}>
-                                Cancel
-                              </Button>
-                            </div>
-                          </form>
-                        </Form>
-                      ) : (
-                        <p className="mt-2">{comment.comment}</p>
-                      )}
-                      <div className="flex items-center space-x-2 mt-2">
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => handleVote(comment.id)}
-                          className={votes.comments[comment.id] ? 'bg-green-100' : ''}
-                        >
-                          <ThumbsUp className="mr-2 h-4 w-4" />
-                          {comment.upvotes.length}
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={() => setReplyingTo(comment.id)}
-                        >
-                          Reply
-                        </Button>
-                      </div>
-                      
-                      {/* Reply form */}
-                      {replyingTo === comment.id && (
-                        <div className="ml-8 mt-4">
-                          <Form {...form}>
-                            <form onSubmit={form.handleSubmit((values) => handleReply(comment.id, values))} className="space-y-4">
-                              <FormField
-                                control={form.control}
-                                name="content"
-                                render={({ field }) => (
-                                  <FormItem>
-                                    <FormControl>
-                                      <Textarea
-                                        {...field}
-                                        placeholder="Write your reply..."
-                                        className="resize-none"
-                                      />
-                                    </FormControl>
-                                    <FormMessage />
-                                  </FormItem>
-                                )}
-                              />
-                              <div className="space-x-2">
-                                <Button type="submit" size="sm">Post Reply</Button>
-                                <Button 
-                                  type="button" 
-                                  variant="ghost" 
-                                  size="sm" 
-                                  onClick={() => setReplyingTo(null)}
-                                >
-                                  Cancel
-                                </Button>
-                              </div>
-                            </form>
-                          </Form>
-                        </div>
-                      )}
-
-                      {/* Nested replies */}
-                      {comment.replies && comment.replies.length > 0 && (
-                        <div className="ml-8 mt-4 space-y-4">
-                          {comment.replies.map((reply) => (
-                            <div key={reply.id} className="flex items-start space-x-4">
-                              <Avatar>
-                                <AvatarImage 
-                                  src={`https://avatar.vercel.sh/${reply.author.email || 'Guest'}`} 
-                                  alt={reply.author.name || 'Guest'} 
-                                />
-                              </Avatar>
-                              <div className="flex-1">
-                                <div className="flex items-center justify-between">
-                                  <p className="font-semibold text-sm">{reply.author.name}</p>
-                                  <div className="flex items-center space-x-2">
-                                    <p className="text-xs text-muted-foreground">
-                                      {new Date(reply.createdAt).toLocaleDateString()}
-                                    </p>
-                                    {session?.user?.email === reply.author.email && (
-                                      <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                          <Button variant="ghost" size="sm">
-                                            <MoreVertical className="h-4 w-4" />
-                                          </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end">
-                                          <DropdownMenuItem onClick={() => setEditingComment(reply.id)}>
-                                            <Pencil className="mr-2 h-4 w-4" />
-                                            Edit
-                                          </DropdownMenuItem>
-                                          <DropdownMenuItem onClick={() => handleDeleteComment(reply.id)}>
-                                            <Trash2 className="mr-2 h-4 w-4" />
-                                            Delete
-                                          </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                      </DropdownMenu>
-                                    )}
-                                  </div>
-                                </div>
-                                {editingComment === reply.id ? (
-                                  <Form {...form}>
-                                    <form onSubmit={form.handleSubmit((values) => handleEditComment(reply.id, values.content))}>
-                                      <FormField
-                                        control={form.control}
-                                        name="content"
-                                        render={({ field }) => (
-                                          <FormItem>
-                                            <FormControl>
-                                              <Textarea 
-                                                {...field} 
-                                                value={field.value || reply.comment}
-                                              />
-                                            </FormControl>
-                                            <FormMessage />
-                                          </FormItem>
-                                        )}
-                                      />
-                                      <div className="mt-2 space-x-2">
-                                        <Button type="submit" size="sm">Save</Button>
-                                        <Button 
-                                          type="button" 
-                                          variant="ghost" 
-                                          size="sm" 
-                                          onClick={() => setEditingComment(null)}
-                                        >
-                                          Cancel
-                                        </Button>
-                                      </div>
-                                    </form>
-                                  </Form>
-                                ) : (
-                                  <p className="mt-1 text-sm">{reply.comment}</p>
-                                )}
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm"
-                                  onClick={() => handleVote(reply.id)}
-                                  className={votes.comments[reply.id] ? 'bg-green-100' : ''}
-                                >
-                                  <ThumbsUp className="mr-2 h-4 w-4" />
-                                  {reply.upvotes.length}
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {index < content.comments.length - 1 && <Separator className="my-4" />}
-                </div>
-              ))
-            )}
-          </ScrollArea>
-        </CardContent>
-      </Card>
-
-      {/* Comment form */}
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Add a Comment</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-              <FormField
-                control={form.control}
-                name="content"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Your comment</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder="Share your thoughts or insights..."
-                        className="resize-none"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      Be respectful and constructive in your comments.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <Button type="submit">Post Comment</Button>
-            </form>
-          </Form>
         </CardContent>
       </Card>
 
@@ -721,54 +413,6 @@ export function ContentViewer({ contentId }: { contentId: string }) {
                   </FormItem>
                 )}
               />
-              
-              {content.type === 'hypothesis' && (
-                <>
-                  <FormField
-                    control={contentForm.control}
-                    name="evidence"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Supporting Evidence</FormLabel>
-                        <FormControl>
-                          <Textarea {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={contentForm.control}
-                    name="experiment"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Proposed Experiment</FormLabel>
-                        <FormControl>
-                          <Textarea {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              )}
-
-              {content.type === 'educational' && (
-                <FormField
-                  control={contentForm.control}
-                  name="resourceUrl"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Resource URL</FormLabel>
-                      <FormControl>
-                        <Input {...field} type="url" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
               <div className="flex justify-end space-x-2">
                 <Button type="button" variant="outline" onClick={() => setEditingContent(false)}>
                   Cancel
@@ -779,6 +423,253 @@ export function ContentViewer({ contentId }: { contentId: string }) {
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Comments section */}
+      <Card className="mt-6">
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <CardTitle>Discussion</CardTitle>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline">
+                  <MessageSquare className="h-4 w-4 mr-2" />
+                  Add Comment
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-96">
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="content"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Your comment</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              placeholder="Share your thoughts or insights..."
+                              className="resize-none"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <div className="flex justify-end space-x-2">
+                      <Button type="submit">Post Comment</Button>
+                    </div>
+                  </form>
+                </Form>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <ScrollArea className="h-[550px] pr-4">
+            {buildCommentTree(content?.comments || []).map((comment) => (
+              <CommentComponent
+                key={comment.id}
+                comment={comment}
+                session={session}
+                onReply={handleReply}
+                onEdit={handleEditComment}
+                onDelete={handleDeleteComment}
+                onVote={handleVote}
+                votes={votes.comments}
+              />
+            ))}
+          </ScrollArea>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function CommentComponent({ 
+  comment, 
+  depth = 0,
+  session,
+  onReply,
+  onEdit,
+  onDelete,
+  onVote,
+  votes
+}: { 
+  comment: CommentType
+  depth?: number
+  session: any
+  onReply: (commentId: string, values: CommentFormData) => Promise<void>
+  onEdit: (commentId: string, values: CommentFormData) => Promise<void>
+  onDelete: (commentId: string) => Promise<void>
+  onVote: (commentId: string) => Promise<void>
+  votes: Record<string, boolean>
+}) {
+  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [isReplying, setIsReplying] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const replyForm = useForm<CommentFormData>({
+    resolver: zodResolver(commentSchema),
+    defaultValues: { content: "" }
+  })
+
+  // Add this to initialize the edit form with the comment text
+  const editForm = useForm<CommentFormData>({
+    resolver: zodResolver(commentSchema),
+    defaultValues: { content: comment.text }
+  })
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString)
+    return date.toLocaleString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric', 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    })
+  }
+  console.log(session?.user?.id)
+  return (
+    <div className={`relative ${depth > 0 ? 'ml-6' : ''}`}>
+      {depth > 0 && comment.replies.length > 0 && (
+        <div 
+          className="absolute left-[-24px] top-0 h-full cursor-pointer"
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          aria-label={isCollapsed ? "Expand comment" : "Collapse comment"}
+        >
+          <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors" />
+          <div className="absolute left-1/2 top-4 w-3 h-0.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors" />
+        </div>
+      )}
+      <div className="flex items-start gap-4 p-4 mb-4 rounded-lg border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-sm hover:shadow-md transition-shadow">
+        <div className="flex-grow">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-3">
+              <Avatar className="h-8 w-8 border border-gray-200 dark:border-gray-700">
+                <AvatarImage src={`https://avatar.vercel.sh/${comment.author.username}`} alt={comment.author.username || 'Anonymous'} />
+                <AvatarFallback>{comment.author.username?.[0].toUpperCase() || 'A'}</AvatarFallback>
+              </Avatar>
+              <div className="flex flex-col">
+                <span className="font-medium text-sm">{comment.author.username || 'Anonymous'}</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400">{formatDate(comment.createdAt)}</span>
+              </div>
+            </div>
+            {session?.user?.id.toString() === comment.author.id!.toString() && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-32">
+                  <DropdownMenuItem onClick={() => setIsEditing(true)} className="cursor-pointer">
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onDelete(comment.id.toString())} className="cursor-pointer text-red-600 dark:text-red-400">
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+          {!isCollapsed && (
+            <>
+              {isEditing ? (
+                <Form {...editForm}>
+                  <form onSubmit={editForm.handleSubmit((values) => {
+                    onEdit(comment.id.toString(), values)
+                    setIsEditing(false)
+                  })} className="space-y-4">
+                    <FormField
+                      control={editForm.control}
+                      name="content"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <Textarea
+                              {...field}
+                              className="resize-none"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <div className="space-x-2">
+                      <Button type="submit" size="sm">Save</Button>
+                      <Button 
+                        type="button" 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => setIsEditing(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                </Form>
+              ) : (
+                <>
+                  <p className="text-sm mb-3 leading-relaxed">{comment.text}</p>
+                  <div className="flex items-center gap-3">
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => onVote(comment.id.toString())}
+                      className={votes[comment.id] ? 'bg-green-100' : ''}
+                    >
+                      <ThumbsUp className="mr-2 h-4 w-4" />
+                      {comment.upvotes.length}
+                    </Button>
+                    <Popover open={isReplying} onOpenChange={setIsReplying}>
+                      <PopoverTrigger asChild>
+                        <Button variant="ghost" size="sm">
+                          <MessageSquare className="h-4 w-4 mr-2" />
+                          Reply
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-80">
+                        <Form {...replyForm}>
+                          <form onSubmit={replyForm.handleSubmit((values) => {
+                            onReply(comment.id.toString(), values)
+                            setIsReplying(false)
+                          })} className="space-y-4">
+                            <Textarea 
+                              {...replyForm.register('content')}
+                              placeholder="Write your reply..." 
+                              className="mb-2 resize-none" 
+                            />
+                            <div className="flex justify-end gap-2">
+                              <Button variant="outline" size="sm" onClick={() => setIsReplying(false)}>Cancel</Button>
+                              <Button size="sm" type="submit">Post Reply</Button>
+                            </div>
+                          </form>
+                        </Form>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      {!isCollapsed && comment.replies.map((reply) => (
+        <CommentComponent
+          key={reply.id}
+          comment={reply}
+          depth={depth + 1}
+          session={session}
+          onReply={onReply}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onVote={onVote}
+          votes={votes}
+        />
+      ))}
     </div>
   )
 }

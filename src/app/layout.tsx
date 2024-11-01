@@ -20,7 +20,7 @@ export default function RootLayout({
 }) {
   return (
     <SessionProvider>
-      <html lang="en">
+      <html lang="en" suppressHydrationWarning>
         <body className={inter.className}>
           <ThemeProvider
                     attribute="class"
@@ -29,7 +29,7 @@ export default function RootLayout({
                     >
             <SidebarProvider>
               <RareDiseasePlatformSidebar>
-                <main className="p-4 container mx-auto">
+                <main className="p-4 container mx-auto scrollbar-gutter-stable">
                     {children}
                   <Toaster />
                 </main>
