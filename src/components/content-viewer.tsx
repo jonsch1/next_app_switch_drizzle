@@ -522,37 +522,44 @@ export function ContentViewer({ contentId }: { contentId: string }) {
             <CardTitle>Discussion</CardTitle>
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline">
+                <Button variant="outline" onClick={() => {
+                  if (!session?.user?.id) {
+                    toast.error('Please sign in to comment')
+                    return
+                  }
+                }}>
                   <MessageSquare className="h-4 w-4 mr-2" />
                   Add Comment
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-96">
-                <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                    <FormField
-                      control={form.control}
-                      name="content"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Your comment</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              placeholder="Share your thoughts or insights..."
-                              className="resize-none"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <div className="flex justify-end space-x-2">
-                      <Button type="submit">Post Comment</Button>
-                    </div>
-                  </form>
-                </Form>
-              </PopoverContent>
+              {session?.user?.id && (
+                <PopoverContent className="w-96">
+                  <Form {...form}>
+                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="content"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Your comment</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                placeholder="Share your thoughts or insights..."
+                                className="resize-none"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="flex justify-end space-x-2">
+                        <Button type="submit">Post Comment</Button>
+                      </div>
+                    </form>
+                  </Form>
+                </PopoverContent>
+              )}
             </Popover>
           </div>
         </CardHeader>
@@ -738,29 +745,40 @@ function CommentComponent({
                     </Button>
                     <Popover open={isReplying} onOpenChange={setIsReplying}>
                       <PopoverTrigger asChild>
-                        <Button variant="ghost" size="sm">
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => {
+                            if (!session?.user?.id) {
+                              toast.error('Please sign in to reply')
+                              return
+                            }
+                          }}
+                        >
                           <MessageSquare className="h-4 w-4 mr-2" />
                           Reply
                         </Button>
                       </PopoverTrigger>
-                      <PopoverContent className="w-80">
-                        <Form {...replyForm}>
-                          <form onSubmit={replyForm.handleSubmit((values) => {
-                            onReply(comment.id.toString(), values)
-                            setIsReplying(false)
-                          })} className="space-y-4">
-                            <Textarea 
-                              {...replyForm.register('content')}
-                              placeholder="Write your reply..." 
-                              className="mb-2 resize-none" 
-                            />
-                            <div className="flex justify-end gap-2">
-                              <Button variant="outline" size="sm" onClick={() => setIsReplying(false)}>Cancel</Button>
-                              <Button size="sm" type="submit">Post Reply</Button>
-                            </div>
-                          </form>
-                        </Form>
-                      </PopoverContent>
+                      {session?.user?.id && (
+                        <PopoverContent className="w-80">
+                          <Form {...replyForm}>
+                            <form onSubmit={replyForm.handleSubmit((values) => {
+                              onReply(comment.id.toString(), values)
+                              setIsReplying(false)
+                            })} className="space-y-4">
+                              <Textarea 
+                                {...replyForm.register('content')}
+                                placeholder="Write your reply..." 
+                                className="mb-2 resize-none" 
+                              />
+                              <div className="flex justify-end gap-2">
+                                <Button variant="outline" size="sm" onClick={() => setIsReplying(false)}>Cancel</Button>
+                                <Button size="sm" type="submit">Post Reply</Button>
+                              </div>
+                            </form>
+                          </Form>
+                        </PopoverContent>
+                      )}
                     </Popover>
                   </div>
                 </>
